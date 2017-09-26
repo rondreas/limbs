@@ -50,20 +50,28 @@ class Limb(object):
         for joint in self.joints:
             pymel.joint(joint, e=True, rotationOrder=order)
 
-    def orient(self, order):
-        """ Modify the orientation for entire limb. """
+    def orient(self, order = "yzx", up = "yup"):
+        """ Modify the orientation for entire limb. Default to my personal preference. """
         for joint in self.joints:
-            pymel.joint(joint, e=True, orientJoint=order)
+            if pymel.listRelatives(joint, children = True, type = "joint"):
+                pymel.joint(joint, e=True, orientJoint=order, secondaryAxisOrient=up)
+            else:
+                # Zero out the last joint in the chain.
+                pymel.setAttr(joint.jointOrientX, 0)
+                pymel.setAttr(joint.jointOrientY, 0)
+                pymel.setAttr(joint.jointOrientZ, 0)
 
     def duplicate(self, prefix):
+        # FIXME
         for joint in self.joints:
             pymel.duplicate(name=prefix + self.name, parentOnly=True)
 
     def save(self):
         """ Return a string to help in rebuilding same rig or reconnecting existing nodes. """
+        # TODO Export a json showing which limb type, and which functionality been applied, ie is limb ik pvc or no flip.
         return self.__class__
 
-    def pvc_ik(self, distance = 1):
+    def pvc_ik(self, controller, distance = 1):
         """ Pole Vector IK """
         vectors = [om.MVector(pymel.joint(x, q=True, p=True, a=True)) for x in self.joints]
 
@@ -87,3 +95,5 @@ class Limb(object):
 
         ikHandle = pymel.ikHandle(sj=self.joints[0], ee=self.joints[-1], solver='ikRPsolver')[0]
         pymel.poleVectorConstraint(pvcLoc, ikHandle)
+
+        pymel.parent(ikHandle, controller)
