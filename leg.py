@@ -1,4 +1,4 @@
-import pymel.core as pymel
+import pymel.core as pm
 import limb
 
 class Leg(limb.Limb):
@@ -6,20 +6,21 @@ class Leg(limb.Limb):
     def no_flip_ik(self, controller):
         """ """
 
-        ikHandle = pymel.ikHandle(
+        ikHandle = pm.ikHandle(
+            name = self.name + "_ikHandle",
             startJoint=self.joints[0],
             endEffector=self.joints[-1],
             solver='ikRPsolver'
         )[0]
 
-        pymel.setAttr(ikHandle.poleVectorX, 0.1)
-        pymel.setAttr(ikHandle.poleVectorY, 0)
-        pymel.setAttr(ikHandle.poleVectorZ, 0)
+        pm.setAttr(ikHandle.poleVectorX, 0.1)
+        pm.setAttr(ikHandle.poleVectorY, 0)
+        pm.setAttr(ikHandle.poleVectorZ, 0)
 
-        pymel.parent(ikHandle, controller)
+        pm.parent(ikHandle, controller)
 
         # Create custom attributes for controller object to control knee twist.
-        pymel.addAttr(
+        pm.addAttr(
             controller,
             shortName='ko',
             longName='kneeOffset',
@@ -28,7 +29,7 @@ class Leg(limb.Limb):
             readable=True,
         )
 
-        pymel.addAttr(
+        pm.addAttr(
             controller,
             shortName='kt',
             longName='kneeTwist',
@@ -40,11 +41,11 @@ class Leg(limb.Limb):
 
         # Create a utility node to get sum of custom attributes.
         # and add output to ik twist.
-        kneeAdd = pymel.createNode(
+        kneeAdd = pm.createNode(
             'plusMinusAverage',
             name=self.name + '_avgNode'
         )
 
-        pymel.connectAttr(controller.kneeOffset, kneeAdd.input1D[0])
-        pymel.connectAttr(controller.kneeTwist, kneeAdd.input1D[1])
-        pymel.connectAttr(kneeAdd.output1D, ikHandle.twist)
+        pm.connectAttr(controller.kneeOffset, kneeAdd.input1D[0])
+        pm.connectAttr(controller.kneeTwist, kneeAdd.input1D[1])
+        pm.connectAttr(kneeAdd.output1D, ikHandle.twist)
