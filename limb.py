@@ -6,6 +6,7 @@ from utils.vectors import sum_distance
 
 
 class Limb(object):
+    """ Functional API for a limb. """
 
     def __init__(self, name, startJoint=None, endJoint=None, parent=None):
         self.name = name
@@ -58,6 +59,7 @@ class Limb(object):
 
     def orient(self, order = "yzx", up = "yup"):
         """ Modify the orientation for entire limb. Default to my personal preference. """
+        # TODO Seeing we're using the standard MAYA implementation issues will occur... Investigate more stable options
         for joint in self.joints:
             if pm.listRelatives(joint, children = True, type ="joint"):
                 pm.joint(joint, e=True, orientJoint=order, secondaryAxisOrient=up)
@@ -70,7 +72,8 @@ class Limb(object):
     def duplicate(self, prefix):
         # FIXME
         for joint in self.joints:
-            pm.duplicate(name=prefix + self.name, parentOnly=True)
+            pm.duplicate(joint, name=prefix + joint.name(), parentOnly=True)
+            pm.parent(world=True)
 
     def save(self):
         """ Return a string to help in rebuilding same rig or reconnecting existing nodes. """
@@ -104,8 +107,17 @@ class Limb(object):
 
         pm.parent(ikHandle, controller)
 
+    def is_planar(self, tolerance = 0.001):
+        """ Quick check to see if the Limb is planar"""
+        # FIXME somehow not working as intended... not sure why though.
+        points = [pm.datatypes.Point(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
+        return points[0].planar(points, tolerance)
+
     def stretch(self, controller):
         """ Add Stretch to an IK limb. Possibly not belonging inside limb? Seeing it only applies to IK. """
+
+        # TODO Seeing this is only implemented for IK limbs, maybe should be moved to a separate class for IK limbs.
+
         distanceNode = pm.createNode(
             "distanceBetween",
             name=self.name + "_distance"
