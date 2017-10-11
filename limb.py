@@ -24,6 +24,12 @@ class Limb(object):
         jointList = []
         chain = None
 
+        # If joints were specified, use them.
+        if type(s) is str and type(e) is str:
+            s = pm.ls(s, type="joint")[0]
+            e = pm.ls(e, type="joint")[0]
+            # TODO raise error if s and e is None?
+
         # Check joint s is in hierarchy of e
         if s.longName() in e.longName():
             chain = e.longName().split('|')
@@ -59,7 +65,8 @@ class Limb(object):
 
     def orient(self, order = "yzx", up = "yup"):
         """ Modify the orientation for entire limb. Default to my personal preference. """
-        # TODO Seeing we're using the standard MAYA implementation issues will occur... Investigate more stable options
+        # TODO Use same method as Comet Joint Orient tool!
+
         for joint in self.joints:
             if pm.listRelatives(joint, children = True, type ="joint"):
                 pm.joint(joint, e=True, orientJoint=order, secondaryAxisOrient=up)
@@ -71,7 +78,12 @@ class Limb(object):
 
     def duplicate(self, prefix):
         # FIXME
-        for joint in self.joints:
+        # Copy first joint
+        pm.duplicate(self.joints[0], name=prefix + self.joints[0].name(), parentOnly=True)
+        pm.parent(world=True)
+
+        # Copy rest and parent them accordingly
+        for joint in self.joints[1::]:
             pm.duplicate(joint, name=prefix + joint.name(), parentOnly=True)
             pm.parent(world=True)
 
@@ -109,9 +121,9 @@ class Limb(object):
 
     def is_planar(self, tolerance = 0.001):
         """ Quick check to see if the Limb is planar"""
-        # FIXME somehow not working as intended... not sure why though.
+        # FIXME not solved yet, will likely need to review and do math with open maya
         points = [pm.datatypes.Point(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
-        return points[0].planar(points, tolerance)
+        return points[0].planar(*points, tol = tolerance)
 
     def stretch(self, controller):
         """ Add Stretch to an IK limb. Possibly not belonging inside limb? Seeing it only applies to IK. """
