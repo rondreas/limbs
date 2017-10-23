@@ -6,6 +6,8 @@ class Leg(limb.Limb):
     def no_flip_ik(self, controller):
         """ """
 
+        # TODO - Get a good pole vector to avoid moving joint chain
+
         ikHandle = pm.ikHandle(
             name = self.name + "_ikHandle",
             startJoint=self.joints[0],

@@ -4,6 +4,7 @@ import maya.api.OpenMaya as om
 from utils.vectors import average
 from utils.vectors import sum_distance
 
+import math
 
 def get_joints(s, e):
     """ Get list of joints between joint s and e """
@@ -37,7 +38,7 @@ def get_joints(s, e):
 
 def getJointPosition(joint):
     """ Get absolute position of joint and return it as MPoint object. """
-    return om.MPoint(pm.joint(joint, query=True, position=True, absolute=True))
+    return om.MVector(pm.joint(joint, query=True, position=True, absolute=True))
 
 class Limb(object):
     """ Functional API for a limb. """
@@ -88,17 +89,22 @@ class Limb(object):
         # TODO Export a json showing which limb type, and which functionality been applied, ie is limb ik pvc or no flip.
         return self.__class__
 
-    def get_plane(self):
-        """ Create a plane based on position of first, last and mid average positions. """
+    def get_plane(self, mid=None):
+        """ Create a plane based on position of first, last and mid average positions. 
+        :rtype: om.MPlane
+        """
 
-        # TODO - fix positioning of the plane to match the joint chain as good as possible.
+        # TODO: Test rigorously - not sure getting the angle is good for deciding how to move the plane.
 
         # Get three points, start, end and mid so we can define a plane to check against
         startPoint = getJointPosition(self.joints[0])
 
-        # Get a list of all points but for start and end, then get their average position.
-        midPoints = [getJointPosition(joint) for joint in self.joints[1:-1]]
-        midPoint = om.MPoint(average([om.MVector(p) for p in midPoints]))
+        if isinstance(mid, pm.nodetypes.Joint):
+            midPoint = getJointPosition(mid)
+        else:
+            # Get a list of all points but for start and end, then get their average position.
+            midPoints = [getJointPosition(joint) for joint in self.joints[1:-1]]
+            midPoint = average([om.MVector(p) for p in midPoints])
 
         endPoint = getJointPosition(self.joints[-1])
 
@@ -108,23 +114,28 @@ class Limb(object):
         plane = om.MPlane()
         plane.setPlane(normal.normalize(), 0)
 
-        # Move the plane to one of our defined points
-        distance = plane.distanceToPoint(om.MVector(startPoint), signed=True)
-        plane.setPlane(normal.normalize(), distance)
+        distance = plane.distanceToPoint(om.MVector(startPoint))
+
+        # TODO - Look into using Open Maya angle, and if we're going to use this more often maybe make into a function.
+        angle = normal.angle(startPoint) * 180 / math.pi
+        if angle < 90.0:
+            plane.setPlane(normal.normalize(), -distance)
+        else:
+            plane.setPlane(normal.normalize(), distance)
 
         return plane
 
-    def planar(self, tolerance=0.0001):
+    def planar(self, tolerance=0.0001, mid=None):
         """ Check to see if limb joints are planar. """
 
         if len(self.joints) == 3:
             # Three points, yes we are planar why are you even asking?
             return True
 
-        plane = self.get_plane()
+        plane = self.get_plane(mid=mid)
 
         # For each joint, check distance to plane.
-        for joint in self.joints:
+        for joint in self.joints[1:-1]:
             pos = om.MVector(getJointPosition(joint))
             if tolerance < plane.distanceToPoint(pos):
                 # We consider this chain non planar and can call it a day already.
@@ -133,10 +144,17 @@ class Limb(object):
         # We managed to go through every joint and end up here so I guess the chain is planar.
         return True
 
-    def make_planar(self, tolerance=0.0001):
+    def make_planar(self, tolerance=0.0001, mid=None):
         """ Get a plane and move non-planar joints so chain is planar. """
-        plane = self.get_plane()
-        for joint in self.joints:
+
+        if len(self.joints) == 3:
+            # Chain must be planar, do nothing.
+            return True
+
+        plane = self.get_plane(mid=mid)
+
+        # Knowing first and last joint is on the plane, we can skip those two.
+        for joint in self.joints[1:-1]:
             pos = om.MVector(getJointPosition(joint))
             if tolerance < plane.distanceToPoint(pos):
                 distance = plane.distanceToPoint(pos, signed=True)
