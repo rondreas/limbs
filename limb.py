@@ -4,13 +4,11 @@ import maya.api.OpenMaya as om
 from utils.vectors import average
 from utils.vectors import sum_distance
 
-import math
 
 def get_joints(s, e):
     """ Get list of joints between joint s and e """
     # TODO single char variables are bad, figure something out.
     jointList = []
-    chain = None
 
     # If joints were specified, use them.
     if type(s) is str and type(e) is str:
@@ -20,19 +18,19 @@ def get_joints(s, e):
     # Check joint s is in hierarchy of e
     if s.longName() in e.longName():
         chain = e.longName().split('|')
+
     elif e.longName() in s.longName():
         # User effed up, set s as e and vice versa...
         chain = s.longName().split('|')
-        tmpS = s
-        s = e
-        e = tmpS
+        s, e = e, s
+
     else:
         return jointList
 
     # Starting from the end joint we go up until we hit the start joint.
     for joint in reversed(chain):
         jointList.append(pm.ls(joint, head=1)[0])
-        if joint == s.name():
+        if joint == s.nodeName():
             # Return a reversed list, so first item is the starting joint.
             return jointList[::-1]
 
@@ -90,8 +88,8 @@ class Limb(object):
         return self.__class__
 
     def get_plane(self, mid=None):
-        """ Create a plane based on position of first, last and mid average positions. 
-        :rtype: om.MPlane
+        """ Create a plane based on position of first, last and mid average positions.
+            :rtype: om.MPlane
         """
 
         # TODO: Test rigorously - not sure getting the angle is good for deciding how to move the plane.
@@ -108,20 +106,16 @@ class Limb(object):
 
         endPoint = getJointPosition(self.joints[-1])
 
+        # Get normal for our known points.
         normal = om.MVector(startPoint - midPoint) ^ om.MVector(midPoint - endPoint)
 
         # Define a plane from our normal at origin
         plane = om.MPlane()
         plane.setPlane(normal.normalize(), 0)
 
-        distance = plane.distanceToPoint(om.MVector(startPoint))
-
-        # TODO - Look into using Open Maya angle, and if we're going to use this more often maybe make into a function.
-        angle = normal.angle(startPoint) * 180 / math.pi
-        if angle < 90.0:
-            plane.setPlane(normal.normalize(), -distance)
-        else:
-            plane.setPlane(normal.normalize(), distance)
+        # Get distance to a point known to be at the desired location.
+        distance = plane.distanceToPoint(om.MVector(startPoint), signed=True)
+        plane.setPlane(normal.normalize(), -distance)
 
         return plane
 
