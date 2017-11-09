@@ -1,15 +1,26 @@
 import pymel.core as pm
 
-def parent(source, target, maintainOffset=True):
+
+def parent(source, target, name='', maintainOffset=True):
     """ Creates a parent constrain using maya nodes.
-        Thanks Cult of Rig and http://bindpose.com. """
+        Thanks Cult of Rig and http://bindpose.com.
+
+        example usage:
+        >>> from limbs.utils import constraints
+        >>> import pymel.core as pm
+        >>> src, trgt = pm.selected()
+        >>> constraints.parent(src, trgt, name='parentConstraint')
+        """
+
+    # Might suffer from crazy long node names. We will see...
+    name = name if name else source.nodeName() + target.nodeName()
 
     # Create required nodes,
-    multMtx = pm.createNode('multMatrix', name='multMtx')
-    decompMtx = pm.createNode('decomposeMatrix', name='decompMtx')
+    multMtx = pm.createNode('multMatrix', name='{}_multMtx'.format(name))
+    decompMtx = pm.createNode('decomposeMatrix', name='{}_decompMtx'.format(name))
 
     if maintainOffset:
-        offsetMtx = pm.createNode('multMatrix', name='offsetMtx')
+        offsetMtx = pm.createNode('multMatrix', name='{}_offsetMtx'.format(name))
         pm.connectAttr(target.worldMatrix[0], offsetMtx.matrixIn[0])
         pm.connectAttr(source.worldInverseMatrix[0], offsetMtx.matrixIn[1])
         pm.setAttr(multMtx.matrixIn[0], offsetMtx.getAttr('matrixSum'))
@@ -22,4 +33,6 @@ def parent(source, target, maintainOffset=True):
 
     pm.connectAttr(decompMtx.outputTranslate, target.translate)
     pm.connectAttr(decompMtx.outputRotate, target.rotate)
-    pm.connectAttr(decompMtx.outputScale, target.scale)
+
+def remove_parent_constraint():
+    pass
