@@ -1,10 +1,12 @@
+import math
+
 import pymel.core as pm
 import maya.api.OpenMaya as om
 
 from utils.vectors import average
 from utils.vectors import sum_distance
 
-
+""" Automate good structure, Limb requires or will create a Limb.name_component DAG object."""
 def get_joints(s, e):
     """ Get list of joints between joint s and e """
     # TODO single char variables are bad, figure something out.
@@ -55,8 +57,13 @@ class Limb(object):
 
     def length(self):
         """ Get length of limb. """
+        # TODO, maybe solve using maya utility nodes
         points = [om.MPoint(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
         return sum_distance(points)
+
+    def orient(self, aim=(1,0,0), up=(0,0,1), parent=None, child=None):
+        """ """
+        pass
 
     def toggle_local_rotation_axis(self):
         """ Toggle the Local Rotation Axis display. """
@@ -80,7 +87,7 @@ class Limb(object):
         # Parent new chain to world
         pm.parent(copy[0], world=True)
 
-        return Limb(self.name + "_copy", copy[0], copy[-1])
+        return copy
 
     def save(self):
         """ Return a string to help in rebuilding same rig or reconnecting existing nodes. """
@@ -91,8 +98,6 @@ class Limb(object):
         """ Create a plane based on position of first, last and mid average positions.
             :rtype: om.MPlane
         """
-
-        # TODO: Test rigorously - not sure getting the angle is good for deciding how to move the plane.
 
         # Get three points, start, end and mid so we can define a plane to check against
         startPoint = getJointPosition(self.joints[0])
@@ -121,6 +126,9 @@ class Limb(object):
 
     def planar(self, tolerance=0.0001, mid=None):
         """ Check to see if limb joints are planar. """
+
+        # Might be a bit redundant, got the pymel.core.datatypes planar() and Point.planar() to work
+        # >>> pm.datatypes.planar(*points)
 
         if len(self.joints) == 3:
             # Three points, yes we are planar why are you even asking?
@@ -207,10 +215,11 @@ class IKLimb(Limb):
 
         pm.connectAttr(multdivNode.outputX, conditionNode.colorIfTrueR)
 
-        # TODO connect condition output to scale, or something...
+        # TODO connect condition output to Translate of joints...
 
     def pvc_ik(self, controller, distance=1):
         """ Pole Vector IK """
+        # TODO make controller optional, if None, create a srt buffer and controller object at end joint.
         vectors = [om.MVector(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
 
         mid = average([vectors[0], vectors[-1]])
@@ -218,11 +227,14 @@ class IKLimb(Limb):
         # Get an average position for all joints excluding first and last in list.
         avg = average(vectors[1:-1])
 
+        # TODO, change method of getting position for PVC target.
         # Get the vector from midpoint to average point.
         direction = om.MVector([b - a for a, b in zip(mid, avg)])
 
         if distance:
             direction *= distance
+
+        # Distance - will likely want a whole limb length as default...
 
         # Get position to place our PVC Target
         pvcTarget = om.MVector(avg + direction)
@@ -231,7 +243,65 @@ class IKLimb(Limb):
         pvcLoc = pm.spaceLocator(p=pvcTarget, a=True)
         pm.xform(pvcLoc, centerPivots=True)
 
-        ikHandle = pm.ikHandle(sj=self.joints[0], ee=self.joints[-1], solver='ikRPsolver')[0]
+        ikHandle = pm.ikHandle(
+            name='{}_ikHandle'.format(self.joints[-1].nodeName()),
+            sj=self.joints[0],
+            ee=self.joints[-1],
+            solver='ikRPsolver'
+        )[0]
+
         pm.poleVectorConstraint(pvcLoc, ikHandle)
 
         pm.parent(ikHandle, controller)
+
+    def slide(self):
+        """ """
+        pass
+
+    def soft(self, controller):
+        """ Create node network to set soft IK for limb."""
+
+        length = self.length()
+
+        # Add attribute to our controller for soft IK damp factor.
+        pm.addAttr(
+            controller,
+            shortName='damp',
+            longName='Dampening',
+            defaultValue=0.0,
+            maxValue=1.0,
+            minValue=0.0,
+            hidden=False,
+            keyable=True,
+            readable=True,
+        )
+
+        # Decompose Matrices to get World Space Position for target and start of limb, then supply a distance node.
+        target = pm.createNode('decomposeMatrix', name='{}_target_WMtx')
+        start = pm.createNode('decomposeMatrix', name='{}_WMtx')
+        targetDistance = pm.createNode('distanceBetween', name='{}_targetDistance')
+
+        pm.connectAttr(controller.worldMatrix[0], target.inputMatrix)
+        pm.connectAttr(self.joints[0].worldMatrix[0], start.inputMatrix)
+
+        # Hook the positions to the distance node, order shouldn't matter
+        pm.connectAttr(target.outputTranslate, targetDistance.point1)
+        pm.connectAttr(start.outputTranslate, targetDistance.point2)
+
+        # Nodes for Soft IK solution.
+        softDist = pm.createNode('multiplyDivide', name='{}_softDistance')
+        softDist.setAttr('operation', 1)    # Set to Multiply
+        softDist.setAttr('input2X', length)
+        pm.connectAttr(controller.damp, softDist.input1X)
+
+        # Hard Distance is the range we want IK to follow fully, which is total length - distance we want soft IK.
+        hardDist = pm.createNode('plusMinusAverage', name='{}_hardDistance')
+        hardDist.setAttr('operation', 2)    # Set to Subtract
+        hardDist.setAttr('input1D[0]', length)
+
+        finalDist = pm.createNode('condition', name='{}_finalDistance')
+        finalDist.setAttr('operation', 5)
+        pm.connectAttr(targetDistance.distance, finalDist.firstTerm)
+        pm.connectAttr(hardDist.output1D, finalDist.secondTerm)
+
+        pm.createNode('condition', name='{}_finalRatio')
