@@ -427,22 +427,6 @@ class IKLimb(Limb):
 
         # TODO not finished!
 
-        """ Parent a Loc to top joint, use same parent as joint. 
-        Get ws pos matrix for loc, vector loc->ctrl. Output soft will be magnitude for vector and applied to IK handle."""
-
-        # Inputs:
-        #   CTRL.Soft
-        #   Limb.length
-        #   Distance to CTRL
-
-        # Outliner example
-        # Component
-        #   parent
-        #       loc
-        #       joints...
-        #   ctrl
-        #   ikHandle
-
         length = self.length()
 
         pm.addAttr(
@@ -458,52 +442,91 @@ class IKLimb(Limb):
             readable=True,
         )
 
-        # Create a locator, position at first joint in world, and set parent to same as for the joint.
-        start = pm.spaceLocator(name='{}_softIK_start'.format(self.name))
-        pm.parent(
-            start,
-            self.joints[0].listRelatives(parent=True),
-            relative=True,
-        )
+        translate_output = pm.group(empty=True, name='{}_translate_output'.format(self.name))
+        pm.parent(translate_output, self.joints[0], relative=True)
+        pm.parent(translate_output, self.joints[0].listRelatives(parent=True)[0].nodeName())
 
-        target = pm.createNode('decomposeMatrix', name='{}_target_WMtx')
+        start = pm.createNode('decomposeMatrix', name='{}_start_WMtx'.format(self.name))
+        target = pm.createNode('decomposeMatrix', name='{}_target_WMtx'.format(self.name))
+
+        pm.connectAttr(translate_output.worldMatrix[0], start.inputMatrix)
         pm.connectAttr(controller.worldMatrix[0], target.inputMatrix)
 
-        distance = pm.createNode('distanceBetween', name='{}_targetDistance')
+        distance = pm.createNode('distanceBetween', name='{}_targetDistance'.format(self.name))
 
         # Hook the positions to the distance node, order shouldn't matter
         pm.connectAttr(target.outputTranslate, distance.point1)
-        pm.connectAttr(start.worldPosition[0], distance.point2)
+        pm.connectAttr(start.outputTranslate, distance.point2)
 
         # Get Limb.length() minus controller.soft
-        len = pm.createNode('plusMinusAverage', name='minLen')
+        len = pm.createNode('plusMinusAverage', name='{}_minLen'.format(self.name))
         len.setAttr('operation', 2)
         len.setAttr('input1D[0]', length)
         pm.connectAttr(controller.soft, len.input1D[1])
 
         # Take the distance minus Soft attribute.
-        dist = pm.createNode('plusMinusAverage', name='minDist')
+        dist = pm.createNode('plusMinusAverage', name='{}_minDist'.format(self.name))
+        dist.setAttr('operation', 2)    # Subtract
+        pm.connectAttr(distance.distance, dist.input1D[0])
+        pm.connectAttr(len.output1D, dist.input1D[1])
 
-        div = pm.createNode('multiplyDivide', name='divSoft_{}')
+        # distance-(length-soft)/soft
+        div = pm.createNode('multiplyDivide', name='{}_divSoft'.format(self.name))
         div.setAttr('operation', 2)  # Set to Divide
+        pm.connectAttr(dist.output1D, div.input1X)
+        pm.connectAttr(controller.soft, div.input2X)
 
-        inv = pm.createNode('multiplyDivide', name='inv_')
+        inv = pm.createNode('multiplyDivide', name='{}_inv'.format(self.name))
         inv.setAttr('operation', 1) # Set to Multiply
         inv.setAttr('input1X', -1)
         pm.connectAttr(div.output, inv.input2)  # Only X channel carrying data.
 
-        exp = pm.createNode('multiplyDivide', name='exp_{}'.format(self.name))
+        exp = pm.createNode('multiplyDivide', name='{}_exp'.format(self.name))
         exp.setAttr('operation', 3) # Set to Power
         exp.setAttr('input1X', math.e)
         pm.connectAttr(inv.output, exp.input2)
 
-        mul = pm.createNode('multiplyDivide', name='multSoft')
+        mul = pm.createNode('multiplyDivide', name='{}_multSoft'.format(self.name))
         mul.setAttr('operation', 1) # Set to Multiply
+        pm.connectAttr(controller.soft, mul.input1X)
+        pm.connectAttr(exp.outputX, mul.input2X)
 
-        magnitude = pm.createNode('plusMinusAverage', name='minSoft')
+        magnitude = pm.createNode('plusMinusAverage', name='{}_magnitude'.format(self.name))
+        magnitude.setAttr('operation', 2)   # Subtract
+        magnitude.setAttr('input1D[0]', length)
+        pm.connectAttr(mul.outputX, magnitude.input1D[1])
 
         # If soft, soft factor, else limb length
-        soft = pm.createNode('condition')
+        soft = pm.createNode('condition', name='{}_ifSoft'.format(self.name))
+        soft.setAttr('operation', 2)   # Greater than
+        soft.setAttr('secondTerm', 0)
+        soft.setAttr('colorIfFalseR', length)
+        pm.connectAttr(magnitude.output1D, soft.colorIfTrueR)
+        pm.connectAttr(controller.soft, soft.firstTerm)
 
-        # If distance less than length,
-        final_magnitude = pm.createNode('condition')
+        # If distance greater than length,
+        final_magnitude = pm.createNode('condition', name='{}_distGreaterLength'.format(self.name))
+        final_magnitude.setAttr('operation', 2)
+        pm.connectAttr(distance.distance, final_magnitude.colorIfFalseR)
+        pm.connectAttr(soft.outColorR, final_magnitude.colorIfTrueR)
+        pm.connectAttr(distance.distance, final_magnitude.firstTerm)
+        pm.connectAttr(len.output1D, final_magnitude.secondTerm)
+
+        # Target - Start =  vector(start->target)
+        direction = pm.createNode('plusMinusAverage', name='{}_dirVector'.format(self.name))
+        direction.setAttr('operation', 2)   # Subtract
+        pm.connectAttr(target.outputTranslate, direction.input3D[0])
+        pm.connectAttr(start.outputTranslate, direction.input3D[1])
+
+        # Normalize vector so we only get direction.
+        normalized = pm.createNode('vectorProduct', name='{}_nVec'.format(self.name))
+        normalized.setAttr('operation', 0)  # No Operation
+        normalized.setAttr('normalizeOutput', 1) # Normalize the output
+        pm.connectAttr(direction.output3D, normalized.input1)
+
+        # Final World Position for driven transform will be vector(start) + vector(direction) * scalar(magnitude)
+
+        # Create a null Transform object which we will apply resulting matrix onto.
+        driven = pm.group(empty=True, name='{}_driven_srtBuffer'.format(self.name))
+        pm.parent(driven, self.joints[0], relative=True)
+        pm.parent(driven, self.joints[0].listRelatives(parent=True)[0].nodeName())
