@@ -1,4 +1,5 @@
 import maya.api.OpenMaya as om
+import math
 
 
 def average(vectors):
@@ -23,3 +24,19 @@ class Line(object):
         # Calculate distance d from line to point p
         d = (om.MVector(p - self.a) ^ om.MVector(p - self.b)).length() / om.MVector(self.b - self.a).length()
         return d
+
+    def closest_point_along_line_to(self, point):
+        """ Solve the position vector for the point along line which is closest to given point. """
+
+        c = om.MPoint(point)
+
+        hypotenuse = om.MVector(self.a - c).length()
+        cathetus =  self.distance_to(point)
+        direction = om.MVector(self.b - self.a).normal()
+        position = direction * math.sqrt(hypotenuse**2 - cathetus**2)
+
+        if om.MVector(self.b - self.a) * om.MVector(self.a - c) > 0:
+            return -1 * position
+
+        else:
+            return position
