@@ -15,6 +15,8 @@ def ctrl(target, offset=True):
         pm.parent(circle, target, relative=True)
         pm.parent(circle, world=True)
 
+    return circle
+
 def replace_shape(old=None, new=None, maintainOffset=False):
     """ Replace the shape of old with new shape."""
 

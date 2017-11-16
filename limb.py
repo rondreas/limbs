@@ -3,13 +3,10 @@ import math
 import pymel.core as pm
 import maya.api.OpenMaya as om
 
-import controllers.controller
+import controllers.controller as ctrl
+import utils.vectors
 
-from utils.vectors import average
-from utils.vectors import sum_distance
-from utils.vectors import Line
 
-""" Automate good structure, Limb requires or will create a Limb.name_component DAG object."""
 def get_joints(s, e):
     """ Get list of joints between joint s and e """
     # TODO single char variables are bad, figure something out.
@@ -62,7 +59,7 @@ class Limb(object):
     def length(self):
         """ Get length of limb. """
         points = [om.MPoint(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
-        return sum_distance(points)
+        return utils.vectors.sum_distance(points)
 
     def orient(self, aim=(1,0,0), up=(0,0,1), parent=None, child=None):
         """ """
@@ -94,7 +91,7 @@ class Limb(object):
 
     def save(self):
         """ Return a string to help in rebuilding same rig or reconnecting existing nodes. """
-        # TODO Export a json showing which limb type, and which functionality been applied, ie is limb ik pvc or no flip.
+        # TODO Export a json showing which limb type, and which functionality been applied.
         return self.__class__
 
     def get_plane(self, mid=None):
@@ -110,7 +107,7 @@ class Limb(object):
         else:
             # Get a list of all points but for start and end, then get their average position.
             midPoints = [getJointPosition(joint) for joint in self.joints[1:-1]]
-            midPoint = average([om.MVector(p) for p in midPoints])
+            midPoint = utils.vectors.average([om.MVector(p) for p in midPoints])
 
         endPoint = getJointPosition(self.joints[-1])
 
@@ -223,16 +220,14 @@ class IKLimb(Limb):
     def pvc_ik(self, controller, pvc_target=None):
         """ Pole Vector IK """
 
-        # TODO controller is None, even when specified. Must be fixed.
-
         # Get position vectors for all joints in limb
         vectors = [om.MVector(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
 
         # Define a line between first and last joint
-        line = Line(vectors[0], vectors[-1])
+        line = utils.vectors.Line(vectors[0], vectors[-1])
 
         # Get an average position for all joints excluding first and last in list.
-        avg = average(vectors[1:-1])
+        avg = utils.vectors.average(vectors[1:-1])
 
         # Get world position along line closest to avg vector.
         mid = line.closest_point_along_line_to(avg)
@@ -261,7 +256,7 @@ class IKLimb(Limb):
         )
 
         # Create the srt buffer group to zero out the controller
-        controllers.controller.srt_buffer(target=pvc_target, child=pvc_target)
+        ctrl.srt_buffer(target=pvc_target, child=pvc_target)
 
         ikHandle = pm.ikHandle(
             name='{}_ikHandle'.format(self.joints[-1].nodeName()),
@@ -271,7 +266,6 @@ class IKLimb(Limb):
         )[0]
 
         pm.poleVectorConstraint(pvcLoc, ikHandle)
-        print(controller)
         pm.parent(ikHandle, controller)
 
     def slide(self):
