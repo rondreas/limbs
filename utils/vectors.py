@@ -36,7 +36,7 @@ class Line(object):
         position = direction * math.sqrt(hypotenuse**2 - cathetus**2)
 
         if om.MVector(self.b - self.a) * om.MVector(self.a - c) > 0:
-            return -1 * position
+            return -1 * position + om.MVector(self.a)
 
         else:
-            return position
+            return position + om.MVector(self.a)

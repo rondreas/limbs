@@ -1,6 +1,47 @@
 import pymel.core as pm
 from limbs.utils import constraints
 
+def ctrl(target, offset=True):
+    """ Create the most basic of controllers at the target, or selected object."""
+    circle = pm.circle(
+        name=target.nodeName() + '_CTRL',
+        normal=(1, 0, 0)
+    )[0]
+
+    if offset:
+        srt_buffer(target=target, child=circle)
+        zero_transform(circle)
+    else:
+        pm.parent(circle, target, relative=True)
+        pm.parent(circle, world=True)
+
+def replace_shape(old=None, new=None, maintainOffset=False):
+    """ Replace the shape of old with new shape."""
+
+    # If nothing specified use selection,
+    if not old and not new:
+        # Not following the Maya standard of 'driver driven' but using the python str replace() order instead.
+        old, new = pm.selected()
+
+    # Get the shape we want to use instead of old
+    shape = new.getShape()
+
+    # Remove the shape of old,
+    pm.delete(old.getShape())
+
+    # Parent the new shape under the old transform
+    pm.parent(
+        shape,
+        old,
+        shape=True,
+        relative=False if maintainOffset else True,
+    )
+
+    # Set shape name according to Maya standards,
+    pm.rename(shape, old.nodeName() + 'Shape')
+
+    # Remove transform of the new object, this will otherwise be empty and clutter the scene.
+    pm.delete(new)
 
 def zero_transform(transform):
     """ Zero out translate, rotate and set scale to 1. """
@@ -9,7 +50,6 @@ def zero_transform(transform):
     transform.setAttr('scale', (1, 1, 1))
 
 def match_transform(driver=None, driven=None):
-    # TODO catch exceptions, only handle kTransforms
     if not driver and not driven:
         driver, driven = pm.selected()
 
@@ -37,7 +77,7 @@ def srt_buffer(target=None, parent=None, child=None):
         empty=True,
     )
 
-    match_transform(srtBuffer, target)
+    match_transform(target, srtBuffer)
 
     if child:
         pm.parent(child, srtBuffer)
@@ -60,13 +100,13 @@ def connect_hierarchies():
 
 def fk_chain(transform):
     """ Create forward kinematic links on list of transforms. parent constrain obj->nextObj.parent"""
-    # TODO, Don't add FK_ prefix if one is already present.
-    # TODO, verify that all given transforms have a parent
+    # TODO, verify that all given transforms have a parent offset group/ srt buffer
     for x in range(len(transform) - 1):
+        name = 'FK_' + transform[x].nodeName() if not transform[x].nodeName().startswith('FK_') else transform[x].nodeName()
         constraints.parent(
             transform[x],
             transform[x + 1].listRelatives(parent=True)[0],
-            name='FK_' + transform[x].nodeName(),
+            name=name,
             maintainOffset=True,
         )
 

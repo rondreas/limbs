@@ -3,8 +3,11 @@ import math
 import pymel.core as pm
 import maya.api.OpenMaya as om
 
+import controllers.controller
+
 from utils.vectors import average
 from utils.vectors import sum_distance
+from utils.vectors import Line
 
 """ Automate good structure, Limb requires or will create a Limb.name_component DAG object."""
 def get_joints(s, e):
@@ -58,7 +61,6 @@ class Limb(object):
 
     def length(self):
         """ Get length of limb. """
-        # TODO, maybe solve using maya utility nodes
         points = [om.MPoint(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
         return sum_distance(points)
 
@@ -218,31 +220,48 @@ class IKLimb(Limb):
 
         # TODO connect condition output to Translate of joints...
 
-    def pvc_ik(self, controller, distance=1):
+    def pvc_ik(self, controller, pvc_target=None):
         """ Pole Vector IK """
-        # TODO make controller optional, if None, create a srt buffer and controller object at end joint.
+
+        # TODO controller is None, even when specified. Must be fixed.
+
+        # Get position vectors for all joints in limb
         vectors = [om.MVector(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
 
-        mid = average([vectors[0], vectors[-1]])
+        # Define a line between first and last joint
+        line = Line(vectors[0], vectors[-1])
 
         # Get an average position for all joints excluding first and last in list.
         avg = average(vectors[1:-1])
 
-        # TODO, change method of getting position for PVC target.
-        # Get the vector from midpoint to average point.
-        direction = om.MVector([b - a for a, b in zip(mid, avg)])
+        # Get world position along line closest to avg vector.
+        mid = line.closest_point_along_line_to(avg)
 
-        if distance:
-            direction *= distance
+        # Get a direction along which to place pvc target.
+        direction = om.MVector(avg - mid).normal()
 
-        # Distance - will likely want a whole limb length as default...
+        # Add magnitude to vector, either closest distance to our line, or length of our limb.
+        if pvc_target:
+            direction *= line.distance_to(pm.xform(pvc_target, q=True, ws=True, t=True))
+        else:
+            direction *= self.length()
 
         # Get position to place our PVC Target
-        pvcTarget = om.MVector(avg + direction)
+        position = om.MVector(avg + direction)
 
         # Create space locator to use as target.
-        pvcLoc = pm.spaceLocator(p=pvcTarget, a=True)
+        pvcLoc = pm.spaceLocator(p=position, a=True)
         pm.xform(pvcLoc, centerPivots=True)
+
+        # Position the pvc target controller,
+        pm.xform(
+            pvc_target,
+            ws=True,
+            t=position
+        )
+
+        # Create the srt buffer group to zero out the controller
+        controllers.controller.srt_buffer(target=pvc_target, child=pvc_target)
 
         ikHandle = pm.ikHandle(
             name='{}_ikHandle'.format(self.joints[-1].nodeName()),
@@ -252,8 +271,8 @@ class IKLimb(Limb):
         )[0]
 
         pm.poleVectorConstraint(pvcLoc, ikHandle)
-
-        #pm.parent(ikHandle, controller)
+        print(controller)
+        pm.parent(ikHandle, controller)
 
     def slide(self):
         """ """
