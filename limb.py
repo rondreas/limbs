@@ -36,7 +36,7 @@ def get_joints(s, e):
             # Return a reversed list, so first item is the starting joint.
             return jointList[::-1]
 
-def getJointPosition(joint):
+def get_joint_position(joint):
     """ Get absolute position of joint and return it as MPoint object. """
     return om.MVector(pm.joint(joint, query=True, position=True, absolute=True))
 
@@ -55,6 +55,9 @@ class Limb(object):
         else:
             # Is this the correct error to raise?
             raise pm.error("No joints specified or selected, aborting operation.")
+
+        if not self.joints:
+            raise ValueError("Limb contains no joints. ")
 
     def length(self):
         """ Get length of limb. """
@@ -75,7 +78,9 @@ class Limb(object):
             joint.setAttr("rotateOrder", order)
 
     def duplicate(self, prefix):
-        """ Duplicate the joints in limb, and return a new limb object for the copy."""
+        """ Duplicate the joints in limb, and return a new limb object for the copy.
+            :var str prefix:
+            :rtype list:"""
 
         # Duplicate all joints and ignore children.
         copy = pm.duplicate(self.joints, parentOnly=True)
@@ -100,16 +105,16 @@ class Limb(object):
         """
 
         # Get three points, start, end and mid so we can define a plane to check against
-        startPoint = getJointPosition(self.joints[0])
+        startPoint = get_joint_position(self.joints[0])
 
         if isinstance(mid, pm.nodetypes.Joint):
-            midPoint = getJointPosition(mid)
+            midPoint = get_joint_position(mid)
         else:
             # Get a list of all points but for start and end, then get their average position.
-            midPoints = [getJointPosition(joint) for joint in self.joints[1:-1]]
+            midPoints = [get_joint_position(joint) for joint in self.joints[1:-1]]
             midPoint = utils.vectors.average([om.MVector(p) for p in midPoints])
 
-        endPoint = getJointPosition(self.joints[-1])
+        endPoint = get_joint_position(self.joints[-1])
 
         # Get normal for our known points.
         normal = om.MVector(startPoint - midPoint) ^ om.MVector(midPoint - endPoint)
@@ -138,7 +143,7 @@ class Limb(object):
 
         # For each joint, check distance to plane.
         for joint in self.joints[1:-1]:
-            pos = om.MVector(getJointPosition(joint))
+            pos = om.MVector(get_joint_position(joint))
             if tolerance < plane.distanceToPoint(pos):
                 # We consider this chain non planar and can call it a day already.
                 return False
@@ -157,13 +162,17 @@ class Limb(object):
 
         # Knowing first and last joint is on the plane, we can skip those two.
         for joint in self.joints[1:-1]:
-            pos = om.MVector(getJointPosition(joint))
+            pos = om.MVector(get_joint_position(joint))
             if tolerance < plane.distanceToPoint(pos):
                 distance = plane.distanceToPoint(pos, signed=True)
                 new_pos = om.MVector(pos - om.MVector(plane.normal() * distance))
                 pm.move(joint, new_pos, absolute=True, preserveChildPosition=True)
 
 class IKLimb(Limb):
+
+    def __init__(self, name, startJoint=None, endJoint=None, parent=None):
+        super(IKLimb, self).__init__(name, startJoint, endJoint, parent)
+        self.ikHandle = None
 
     def stretch(self, controller):
         """ Add Stretch to an IK limb. Possibly not belonging inside limb? Seeing it only applies to IK. """
@@ -220,6 +229,13 @@ class IKLimb(Limb):
     def pvc_ik(self, controller, pvc_target=None):
         """ Pole Vector IK """
 
+        # Parameter validation
+        if not isinstance(controller, pm.nodetypes.Transform):
+            raise ValueError("Bad data type for parameter 'controller'")
+
+        if pvc_target and not isinstance(pvc_target, pm.nodetypes.Transform):
+            raise ValueError("Bad data type for parameter 'pvc_target'")
+
         # Get position vectors for all joints in limb
         vectors = [om.MVector(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
 
@@ -231,9 +247,12 @@ class IKLimb(Limb):
 
         # Get world position along line closest to avg vector.
         mid = line.closest_point_along_line_to(avg)
+        print("Mid Position: {}".format(mid))
+        print("Avg Position: {}".format(avg))
 
         # Get a direction along which to place pvc target.
         direction = om.MVector(avg - mid).normal()
+        print("Dir Pre: {}".format(direction))
 
         # Add magnitude to vector, either closest distance to our line, or length of our limb.
         if pvc_target:
@@ -241,32 +260,36 @@ class IKLimb(Limb):
         else:
             direction *= self.length()
 
+        print("Dir Post: {}".format(direction))
+        # TODO Debug Position, am I starting from first joint?
         # Get position to place our PVC Target
         position = om.MVector(avg + direction)
 
-        # Create space locator to use as target.
-        pvcLoc = pm.spaceLocator(p=position, a=True)
-        pm.xform(pvcLoc, centerPivots=True)
+        print("Position: {}".format(position))
 
-        # Position the pvc target controller,
-        pm.xform(
-            pvc_target,
-            ws=True,
-            t=position
-        )
+        if pvc_target:
+            # Position the pvc target controller,
+            pm.xform(
+                pvc_target,
+                ws=True,
+                t=position
+            )
+            # Create the srt buffer group to zero out the controller
+            ctrl.srt_buffer(target=pvc_target, child=pvc_target)
 
-        # Create the srt buffer group to zero out the controller
-        ctrl.srt_buffer(target=pvc_target, child=pvc_target)
+        else:
+            pvc_target = pm.spaceLocator(p=position, a=True)
+            pm.xform(pvcLoc, centerPivots=True)
 
-        ikHandle = pm.ikHandle(
+        self.ikHandle = pm.ikHandle(
             name='{}_ikHandle'.format(self.joints[-1].nodeName()),
             sj=self.joints[0],
             ee=self.joints[-1],
             solver='ikRPsolver'
         )[0]
 
-        pm.poleVectorConstraint(pvcLoc, ikHandle)
-        pm.parent(ikHandle, controller)
+        pm.poleVectorConstraint(pvcLoc, self.ikHandle)
+        pm.parent(self.ikHandle, controller)
 
     def slide(self):
         """ """
@@ -435,11 +458,16 @@ class IKLimb(Limb):
         pm.connectAttr(multiply_mtx.matrixSum, result_mtx.inputMatrix)
         pm.connectAttr(result_mtx.outputTranslate, driven.translate)
 
-    def h_soft(self, controller):
+    def h_soft(self, controller, pvc_target=None):
         """ Soft IK as show on http://hhoughton07.wixsite.com/hazmondo/maya-ik-arm """
 
         # TODO not finished!
 
+        # No IK implemented so run the regular pole vector IK.
+        if not self.ikHandle:
+            self.pvc_ik(controller, pvc_target)
+
+        # Get length of limb
         length = self.length()
 
         pm.addAttr(
@@ -455,10 +483,12 @@ class IKLimb(Limb):
             readable=True,
         )
 
+        # Create a group at top joint, so we got a source for position in order to avoid cycle checks.
         translate_output = pm.group(empty=True, name='{}_translate_output'.format(self.name))
         pm.parent(translate_output, self.joints[0], relative=True)
         pm.parent(translate_output, self.joints[0].listRelatives(parent=True)[0].nodeName())
 
+        # Get matrices for start and controller position
         start = pm.createNode('decomposeMatrix', name='{}_start_WMtx'.format(self.name))
         target = pm.createNode('decomposeMatrix', name='{}_target_WMtx'.format(self.name))
 
@@ -467,7 +497,7 @@ class IKLimb(Limb):
 
         distance = pm.createNode('distanceBetween', name='{}_targetDistance'.format(self.name))
 
-        # Hook the positions to the distance node, order shouldn't matter
+        # Hook the world positions to the distance node, order shouldn't matter
         pm.connectAttr(target.outputTranslate, distance.point1)
         pm.connectAttr(start.outputTranslate, distance.point2)
 
@@ -519,7 +549,7 @@ class IKLimb(Limb):
 
         # If distance greater than length,
         final_magnitude = pm.createNode('condition', name='{}_distGreaterLength'.format(self.name))
-        final_magnitude.setAttr('operation', 2)
+        final_magnitude.setAttr('operation', 2) # Greater than
         pm.connectAttr(distance.distance, final_magnitude.colorIfFalseR)
         pm.connectAttr(soft.outColorR, final_magnitude.colorIfTrueR)
         pm.connectAttr(distance.distance, final_magnitude.firstTerm)
@@ -532,14 +562,25 @@ class IKLimb(Limb):
         pm.connectAttr(start.outputTranslate, direction.input3D[1])
 
         # Normalize vector so we only get direction.
-        normalized = pm.createNode('vectorProduct', name='{}_nVec'.format(self.name))
+        normalized = pm.createNode('vectorProduct', name='{}_normalized'.format(direction.nodeName()))
         normalized.setAttr('operation', 0)  # No Operation
         normalized.setAttr('normalizeOutput', 1) # Normalize the output
         pm.connectAttr(direction.output3D, normalized.input1)
 
-        # Final World Position for driven transform will be vector(start) + vector(direction) * scalar(magnitude)
+        # Multiply the magnitude with the normalized directional vector.
+        final_vector = pm.createNode('multiplyDivide', name='{}_softIK_output'.format(self.name))
+        final_vector.setAttr('operation', 1)    # Multiply
+        # Connect all the scalar inputs X, Y, Z
+        pm.connectAttr(final_magnitude.outColorR, final_vector.input2X)
+        pm.connectAttr(final_magnitude.outColorR, final_vector.input2Y)
+        pm.connectAttr(final_magnitude.outColorR, final_vector.input2Z)
+        # Connect the Vector
+        pm.connectAttr(normalized.output, final_vector.input1)
 
-        # Create a null Transform object which we will apply resulting matrix onto.
-        driven = pm.group(empty=True, name='{}_driven_srtBuffer'.format(self.name))
-        pm.parent(driven, self.joints[0], relative=True)
-        pm.parent(driven, self.joints[0].listRelatives(parent=True)[0].nodeName())
+        # Add Position Vector for top joint, and the output from soft IK solution.
+        ik_world_position = pm.createNode('plusMinusAverage', name='{}_target_WPos'.format(self.ikHandle.nodeName()))
+        ik_world_position.setAttr('operation', 1)   # Sum
+        pm.connectAttr(start.outputTranslate, ik_world_position.input3D[0])
+        pm.connectAttr(final_vector.output, ik_world_position.input3D[1])
+
+        # TODO Sort the hierarchy for ikHandle, and give ik_world_position.output3D as worldspace transforms.

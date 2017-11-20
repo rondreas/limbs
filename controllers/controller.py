@@ -20,6 +20,10 @@ def ctrl(target, offset=True):
 def replace_shape(old=None, new=None, maintainOffset=False):
     """ Replace the shape of old with new shape."""
 
+    # Check that old is specified and either a Transform or Shape.
+    if old and (not isinstance(old, pm.nodetypes.Transform) or not isinstance(old, pm.nodetypes.Shape)):
+        raise ValueError("Parameters new and old must be of type Transform or Shape.")
+
     # If nothing specified use selection,
     if not old and not new:
         # Not following the Maya standard of 'driver driven' but using the python str replace() order instead.
