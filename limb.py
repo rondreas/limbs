@@ -36,16 +36,18 @@ def get_joints(s, e):
             # Return a reversed list, so first item is the starting joint.
             return jointList[::-1]
 
+
 def get_joint_position(joint):
     """ Get absolute position of joint and return it as MPoint object. """
     return om.MVector(pm.joint(joint, query=True, position=True, absolute=True))
 
+
 class Limb(object):
     """ Functional API for a limb. """
 
-    def __init__(self, name, startJoint=None, endJoint=None, parent=None):
+    def __init__(self, name, startJoint=None, endJoint=None):
+
         self.name = name
-        self.parent = parent
 
         selection = pm.ls(sl=True, type="joint")
         if startJoint and endJoint:
@@ -59,14 +61,61 @@ class Limb(object):
         if not self.joints:
             raise ValueError("Limb contains no joints. ")
 
+    def __getitem__(self, item):
+        return self.joints[item]
+
+    def __repr__(self):
+        return 'Limb({name}, {startJoint}, {endJoint})'.format(name=self.name, startJoint=self[0], endJoint=self[-1])
+
     def length(self):
         """ Get length of limb. """
         points = [om.MPoint(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
         return utils.vectors.sum_distance(points)
 
-    def orient(self, aim=(1,0,0), up=(0,0,1), parent=None, child=None):
+    def associate(self):
+        """ Create Message attributes for each joint, and connect to all other joints. """
+
+        # Create compound attribute to store hierarchy connection in,
+        for joint in self.joints:
+
+            # If already present, delete the attribute to recreate it,
+            if joint.nodeName()+'.limb' in joint.listAttr():
+                pm.deleteAttr(joint, attribute='limb')
+
+            # Create the attribute, make sure top and end has size 1,
+            pm.addAttr(
+                joint,
+                longName='limb',
+                attributeType='compound',
+                numberOfChildren=1 if (joint == self.joints[0] or joint == self.joints[-1]) else 2,
+            )
+
+        # Create attributes to connect parent child onto,
+        for parent, child in zip(self.joints[:-1], self.joints[1:]):
+            pm.addAttr(child, longName='limbParent', attributeType='message', parent='limb')
+            pm.addAttr(parent, longName='limbChild', attributeType='message', parent='limb')
+
+        # Make connections, apparently can't make it work inside same loop as creation.
+        for parent, child in zip(self.joints[:-1], self.joints[1:]):
+            pm.connectAttr(parent.message, child.limbParent)
+            pm.connectAttr(child.message, parent.limbChild)
+
+    def orient(self, aim=(1, 0, 0), up=(0, 0, 1), parent=None, child=None):
         """ """
-        pass
+        joints = [om.MVector(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
+
+        # Let's try out MVectorArray
+        aim_vectors = om.MVectorArray()
+        up_vectors = om.MVectorArray()
+
+        for i in range(len(joints) - 1):
+            aim_vectors.append(joints[i] - joints[i + 1])
+            if i > 0:
+                up_vectors.append(
+                    om.MVector(joints[i - 1] - joints[i]) ^ om.MVector(joints[i] - joints[i + 1])
+                )
+
+        return {'aim': aim_vectors, 'up': up_vectors}
 
     def toggle_local_rotation_axis(self):
         """ Toggle the Local Rotation Axis display. """
@@ -167,6 +216,7 @@ class Limb(object):
                 distance = plane.distanceToPoint(pos, signed=True)
                 new_pos = om.MVector(pos - om.MVector(plane.normal() * distance))
                 pm.move(joint, new_pos, absolute=True, preserveChildPosition=True)
+
 
 class IKLimb(Limb):
 
@@ -278,8 +328,8 @@ class IKLimb(Limb):
             ctrl.srt_buffer(target=pvc_target, child=pvc_target)
 
         else:
-            pvc_target = pm.spaceLocator(p=position, a=True)
-            pm.xform(pvcLoc, centerPivots=True)
+            pvc_target = pm.spaceLocator(p=position, a=True, name="{}_pvc_target".format(self.name))
+            pm.xform(pvc_target, centerPivots=True)
 
         self.ikHandle = pm.ikHandle(
             name='{}_ikHandle'.format(self.joints[-1].nodeName()),
@@ -288,7 +338,7 @@ class IKLimb(Limb):
             solver='ikRPsolver'
         )[0]
 
-        pm.poleVectorConstraint(pvcLoc, self.ikHandle)
+        pm.poleVectorConstraint(pvc_target, self.ikHandle)
         pm.parent(self.ikHandle, controller)
 
     def slide(self):
@@ -298,7 +348,7 @@ class IKLimb(Limb):
     def soft(self, controller):
         """ Create node network to set soft IK for limb."""
 
-        # TODO: Review naming, and see if nodes could be removed.
+        # TODO Out Vector = Length if distance to ctrl is equal to or less than length...
 
         length = self.length()
 
@@ -336,24 +386,24 @@ class IKLimb(Limb):
 
         # Nodes for Soft IK solution.
         soft_distance = pm.createNode('multiplyDivide', name='{}_softDist'.format(self.name))
-        soft_distance.setAttr('operation', 1)    # Set to Multiply
+        soft_distance.setAttr('operation', 1)  # Set to Multiply
         soft_distance.setAttr('input2X', length)
         pm.connectAttr(controller.soft, soft_distance.input1X)
 
         # Hard Distance is the range we want IK to follow fully, which is total length - distance we want soft IK.
         hard_distance = pm.createNode('plusMinusAverage', name='{}_hardDist'.format(self.name))
-        hard_distance.setAttr('operation', 2)    # Set to Subtract
+        hard_distance.setAttr('operation', 2)  # Set to Subtract
         hard_distance.setAttr('input1D[0]', length)
         pm.connectAttr(soft_distance.outputX, hard_distance.input1D[1])
 
         # Get the Hard distance minus distance to target.
         subtract_distance = pm.createNode('plusMinusAverage', name='{}_subDist'.format(self.name))
-        subtract_distance.setAttr('operation', 2)   # Subtract
+        subtract_distance.setAttr('operation', 2)  # Subtract
         pm.connectAttr(hard_distance.output1D, subtract_distance.input1D[0])
         pm.connectAttr(targetDistance.distance, subtract_distance.input1D[1])
 
         distance_factor = pm.createNode('multiplyDivide', name='{}_distFac'.format(self.name))
-        distance_factor.setAttr('operation', 2) # Divide
+        distance_factor.setAttr('operation', 2)  # Divide
         pm.connectAttr(subtract_distance.output1D, distance_factor.input1X)
         pm.connectAttr(soft_distance.outputX, distance_factor.input2X)
 
@@ -386,7 +436,7 @@ class IKLimb(Limb):
 
         # Sum Hard Distance with whatever one can call the node above.
         final_soft_distance = pm.createNode('plusMinusAverage', name='{}_sum_softDistance'.format(self.name))
-        final_soft_distance.setAttr('operation', 1) # Sum
+        final_soft_distance.setAttr('operation', 1)  # Sum
         pm.connectAttr(hard_distance.output1D, final_soft_distance.input1D[0])
         pm.connectAttr(mult_soft_distance.outputX, final_soft_distance.input1D[1])
 
@@ -407,13 +457,13 @@ class IKLimb(Limb):
         ratio = pm.createNode('condition', name='{}_finalRatio'.format(self.name))
         ratio.setAttr('secondTerm', 0)
         ratio.setAttr('colorIfTrueR', 1)
-        ratio.setAttr('operation', 0) # Equals
+        ratio.setAttr('operation', 0)  # Equals
         pm.connectAttr(controller.soft, ratio.firstTerm)
         pm.connectAttr(soft_ratio.outputX, ratio.colorIfFalseR)
 
         # 1 - ratio to get what to multiply vectors with.
         subtract_ratio = pm.createNode('plusMinusAverage', name='{}_oneMinus_ratio'.format(self.name))
-        subtract_ratio.setAttr('operation', 2)   # Subtract
+        subtract_ratio.setAttr('operation', 2)  # Subtract
         subtract_ratio.setAttr('input1D[0]', 1)
         pm.connectAttr(ratio.outColorR, subtract_ratio.input1D[1])
 
@@ -458,12 +508,13 @@ class IKLimb(Limb):
         pm.connectAttr(multiply_mtx.matrixSum, result_mtx.inputMatrix)
         pm.connectAttr(result_mtx.outputTranslate, driven.translate)
 
+        # TODO temporary fix make something better...
+        pm.parent(self.ikHandle, driven)
+
     def h_soft(self, controller, pvc_target=None):
         """ Soft IK as show on http://hhoughton07.wixsite.com/hazmondo/maya-ik-arm """
 
-        # TODO not finished!
-
-        # No IK implemented so run the regular pole vector IK.
+        # if no IK implemented so run the regular pole vector IK.
         if not self.ikHandle:
             self.pvc_ik(controller, pvc_target)
 
@@ -503,13 +554,13 @@ class IKLimb(Limb):
 
         # Get Limb.length() minus controller.soft
         len = pm.createNode('plusMinusAverage', name='{}_minLen'.format(self.name))
-        len.setAttr('operation', 2)
+        len.setAttr('operation', 2)  # Subtract
         len.setAttr('input1D[0]', length)
         pm.connectAttr(controller.soft, len.input1D[1])
 
         # Take the distance minus Soft attribute.
         dist = pm.createNode('plusMinusAverage', name='{}_minDist'.format(self.name))
-        dist.setAttr('operation', 2)    # Subtract
+        dist.setAttr('operation', 2)  # Subtract
         pm.connectAttr(distance.distance, dist.input1D[0])
         pm.connectAttr(len.output1D, dist.input1D[1])
 
@@ -520,28 +571,28 @@ class IKLimb(Limb):
         pm.connectAttr(controller.soft, div.input2X)
 
         inv = pm.createNode('multiplyDivide', name='{}_inv'.format(self.name))
-        inv.setAttr('operation', 1) # Set to Multiply
+        inv.setAttr('operation', 1)  # Set to Multiply
         inv.setAttr('input1X', -1)
         pm.connectAttr(div.output, inv.input2)  # Only X channel carrying data.
 
         exp = pm.createNode('multiplyDivide', name='{}_exp'.format(self.name))
-        exp.setAttr('operation', 3) # Set to Power
+        exp.setAttr('operation', 3)  # Set to Power
         exp.setAttr('input1X', math.e)
         pm.connectAttr(inv.output, exp.input2)
 
         mul = pm.createNode('multiplyDivide', name='{}_multSoft'.format(self.name))
-        mul.setAttr('operation', 1) # Set to Multiply
+        mul.setAttr('operation', 1)  # Set to Multiply
         pm.connectAttr(controller.soft, mul.input1X)
         pm.connectAttr(exp.outputX, mul.input2X)
 
         magnitude = pm.createNode('plusMinusAverage', name='{}_magnitude'.format(self.name))
-        magnitude.setAttr('operation', 2)   # Subtract
+        magnitude.setAttr('operation', 2)  # Subtract
         magnitude.setAttr('input1D[0]', length)
         pm.connectAttr(mul.outputX, magnitude.input1D[1])
 
         # If soft, soft factor, else limb length
         soft = pm.createNode('condition', name='{}_ifSoft'.format(self.name))
-        soft.setAttr('operation', 2)   # Greater than
+        soft.setAttr('operation', 2)  # Greater than
         soft.setAttr('secondTerm', 0)
         soft.setAttr('colorIfFalseR', length)
         pm.connectAttr(magnitude.output1D, soft.colorIfTrueR)
@@ -549,7 +600,7 @@ class IKLimb(Limb):
 
         # If distance greater than length,
         final_magnitude = pm.createNode('condition', name='{}_distGreaterLength'.format(self.name))
-        final_magnitude.setAttr('operation', 2) # Greater than
+        final_magnitude.setAttr('operation', 2)  # Greater than
         pm.connectAttr(distance.distance, final_magnitude.colorIfFalseR)
         pm.connectAttr(soft.outColorR, final_magnitude.colorIfTrueR)
         pm.connectAttr(distance.distance, final_magnitude.firstTerm)
@@ -557,19 +608,19 @@ class IKLimb(Limb):
 
         # Target - Start =  vector(start->target)
         direction = pm.createNode('plusMinusAverage', name='{}_dirVector'.format(self.name))
-        direction.setAttr('operation', 2)   # Subtract
+        direction.setAttr('operation', 2)  # Subtract
         pm.connectAttr(target.outputTranslate, direction.input3D[0])
         pm.connectAttr(start.outputTranslate, direction.input3D[1])
 
         # Normalize vector so we only get direction.
         normalized = pm.createNode('vectorProduct', name='{}_normalized'.format(direction.nodeName()))
         normalized.setAttr('operation', 0)  # No Operation
-        normalized.setAttr('normalizeOutput', 1) # Normalize the output
+        normalized.setAttr('normalizeOutput', 1)  # Normalize the output
         pm.connectAttr(direction.output3D, normalized.input1)
 
         # Multiply the magnitude with the normalized directional vector.
         final_vector = pm.createNode('multiplyDivide', name='{}_softIK_output'.format(self.name))
-        final_vector.setAttr('operation', 1)    # Multiply
+        final_vector.setAttr('operation', 1)  # Multiply
         # Connect all the scalar inputs X, Y, Z
         pm.connectAttr(final_magnitude.outColorR, final_vector.input2X)
         pm.connectAttr(final_magnitude.outColorR, final_vector.input2Y)
@@ -579,8 +630,15 @@ class IKLimb(Limb):
 
         # Add Position Vector for top joint, and the output from soft IK solution.
         ik_world_position = pm.createNode('plusMinusAverage', name='{}_target_WPos'.format(self.ikHandle.nodeName()))
-        ik_world_position.setAttr('operation', 1)   # Sum
+        ik_world_position.setAttr('operation', 1)  # Sum
         pm.connectAttr(start.outputTranslate, ik_world_position.input3D[0])
         pm.connectAttr(final_vector.output, ik_world_position.input3D[1])
 
         # TODO Sort the hierarchy for ikHandle, and give ik_world_position.output3D as worldspace transforms.
+
+        # Temporary Fix
+        pm.parent(self.ikHandle, world=True)
+        pm.connectAttr(
+            ik_world_position.output3D,
+            self.ikHandle.translate
+        )
