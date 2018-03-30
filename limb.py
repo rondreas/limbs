@@ -100,22 +100,28 @@ class Limb(object):
             pm.connectAttr(parent.message, child.limbParent)
             pm.connectAttr(child.message, parent.limbChild)
 
-    def orient(self, aim=(1, 0, 0), up=(0, 0, 1), parent=None, child=None):
-        """ """
-        joints = [om.MVector(pm.joint(x, q=True, p=True, a=True)) for x in self.joints]
+    def orient(self):
+        """ Set orientation for limb, """
 
-        # Let's try out MVectorArray
-        aim_vectors = om.MVectorArray()
-        up_vectors = om.MVectorArray()
+        # Parent everything but top joint to world,
+        pm.parent(self.joints[1:], world=True)
 
-        for i in range(len(joints) - 1):
-            aim_vectors.append(joints[i] - joints[i + 1])
-            if i > 0:
-                up_vectors.append(
-                    om.MVector(joints[i - 1] - joints[i]) ^ om.MVector(joints[i] - joints[i + 1])
-                )
+        # Get vectors for each joint to it's child in limb,
+        aim_vectors = list()
+        for index in range(len(self.joints[:-1])):
+            p1 = self.joints[index].getAttr('worldMatrix').translate
+            p2 = self.joints[index + 1].getAttr('worldMatrix').translate
+            vector = (p2 - p1).normal()
+            aim_vectors.append(vector)
 
-        return {'aim': aim_vectors, 'up': up_vectors}
+        # For every two vectors we will get an up vectors from their cross product,
+        up_vectors = list()
+        for v, w in zip(aim_vectors[:-1], aim_vectors[1:]):
+            up_vectors.append((w ^ v).normal())
+
+        # Re-parent children to previous parent,
+        for parent, child in zip(self.joints[:-1], self.joints[1:]):
+            pm.parent(child, parent)
 
     def toggle_local_rotation_axis(self):
         """ Toggle the Local Rotation Axis display. """
