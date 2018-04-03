@@ -61,6 +61,8 @@ class Limb(object):
         if not self.joints:
             raise ValueError("Limb contains no joints. ")
 
+        self.children = self.joints[-1].getChildren()
+
     def __getitem__(self, item):
         return self.joints[item]
 
@@ -101,10 +103,18 @@ class Limb(object):
             pm.connectAttr(child.message, parent.limbChild)
 
     def orient(self):
-        """ Set orientation for limb, """
+        """ Set orientation for limb,
+
+        blatantly taken method from Pedro Bellini show here:
+         http://lesterbanks.com/2014/04/creating-aim-transformation-maya-python-api/
+
+        """
+
+        # TODO; avoid makeIdentity and solve using math.
 
         # Parent everything but top joint to world,
         pm.parent(self.joints[1:], world=True)
+        pm.parent(self.children, world=True)
 
         # Get vectors for each joint to it's child in limb,
         aim_vectors = list()
@@ -117,11 +127,67 @@ class Limb(object):
         # For every two vectors we will get an up vectors from their cross product,
         up_vectors = list()
         for v, w in zip(aim_vectors[:-1], aim_vectors[1:]):
-            up_vectors.append((w ^ v).normal())
+            up_vectors.append((v ^ w).normal())
+
+        # Extend the vector arrays,
+        aim_vectors.append(aim_vectors[-1])
+        up_vectors.insert(0, up_vectors[0])
+        up_vectors.append(up_vectors[-1])
+
+        # For each joint, it's desired aim direction and up direction.
+        for joint, aim, up in zip(self.joints, aim_vectors, up_vectors):
+
+            # Zero out rotation and orient values for joint,
+            pm.makeIdentity(
+                joint,
+                apply=True,
+                jointOrient=True,
+                rotate=True,
+            )
+
+            # Define axis which are to be rotated into position,
+            aim_axis = pm.dt.Vector.xAxis
+            up_axis = pm.dt.Vector.zNegAxis
+            side = (aim ^ up).normal()
+
+            # Re-evaluate the up vector by taking the cross product of side and aim to get orthogonal vectors,
+            up = (side ^ aim).normal()
+
+            # Quaternion U describing the rotation to get from aim axis to aim vector,
+            quat_u = pm.dt.Quaternion(aim_axis, aim)
+
+            # Rotate the up axis with
+            up_rotated = up_axis.rotateBy(quat_u)
+
+            # Get the angle in radians between up vector and the rotated up vector,
+            angle = math.acos(up_rotated * up)
+
+            # Get Quaternion V describing angle radians around aim vector,
+            quat_v = pm.dt.Quaternion(angle, aim)
+
+            # Check rotation didn't go wrong way,
+            if not up.isEquivalent(up_rotated.rotateBy(quat_v), 1.0e-5):
+                angle = (2 * math.pi) - angle
+                quat_v = pm.dt.Quaternion(angle, aim)
+
+            # Set the final rotation Quaternion, and multiply the inverse of original orientation,
+            final_rotation = quat_u * quat_v
+            joint.setRotation(final_rotation)
+
+            # Any rotation values will be baked into jointOrient attribute,
+            pm.makeIdentity(
+                joint,
+                apply=True,
+                r=True,
+            )
 
         # Re-parent children to previous parent,
         for parent, child in zip(self.joints[:-1], self.joints[1:]):
             pm.parent(child, parent)
+
+        # And any orphan children as well.
+        for child in self.children:
+            pm.parent(child, self.joints[-1])
 
     def toggle_local_rotation_axis(self):
         """ Toggle the Local Rotation Axis display. """
