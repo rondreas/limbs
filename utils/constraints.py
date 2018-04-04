@@ -40,6 +40,8 @@ def parent(source, target, name='', maintainOffset=True):
 def aim(source, target, name=''):
     """ Create an aim constraint with maya nodes. """
 
+    # Works, world up check
+
     source_decomposed = pm.createNode('decomposeMatrix', name='{}_dcmpMtx'.format(source.nodeName()))
     pm.connectAttr(source.worldMatrix[0], source_decomposed.inputMatrix)
 
@@ -94,3 +96,34 @@ def aim(source, target, name=''):
     pm.connectAttr(mtx.output, decomposeMtx.inputMatrix)
 
     pm.connectAttr(decomposeMtx.outputRotate, source.rotate)
+
+class Constraint(object):
+    """ Base class for a constraint. """
+    def __init__(self, *args, **kwargs):
+        # Parse argument list.
+        if len(args) >= 2:
+
+            if isinstance(args[0], str):
+                source = pm.ls(args[0])
+                if len(source) < 1:
+                    raise ValueError("More than one object matches name: {}".format(args[0]))
+                self.source = source[0]
+
+            elif isinstance(args[0], pm.nt.Transform):
+                self.source = args[0]
+
+            self.target = args[1]
+
+        # Parse keywords and set attributes where appropriate
+        for key in ('source', 'target', 'name'):
+            if key in kwargs:
+                setattr(self, key, kwargs[key])
+
+        self._nodes = list()
+
+class AimConstraint(Constraint):
+    def __init__(self, *args, **kwargs):
+        super(AimConstraint, self).__init__(*args, **kwargs)
+
+    def _create_nodes(self):
+        """ Create the required nodes for aim constraint set-up. """

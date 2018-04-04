@@ -6,20 +6,26 @@ class Spine(limb.Limb):
 
     def spline_ik(self):
         """ Setup a normal spline spine. """
-        # TODO add input variable for number of controllers, and create the number of controllers specified.
         ikHandle, ikEffector, ikCurve = pm.ikHandle(
-            name=self.name + "_ikHandle",
+            name=self.name + "_ikh",
             startJoint=self.joints[0],
             endEffector=self.joints[-1],
             solver='ikSplineSolver',
             simplifyCurve=False
         )
 
-        for cv in ikCurve.cv:
-            pm.cluster(cv.name(), name=cv.name() + '_cluster')
+        # Get the number of digits so we can set the zfill correctly,
+        digits = len(str(len(ikCurve.cv)))
 
-    def ribbon(self):
-        """ Setup a ribbon spine. """
+        # Iterate over each cv and create a cluster deformer,
+        for i, cv in enumerate(ikCurve.cv):
+            cluster_node, cluster_handle = pm.cluster(cv)
+            cluster_handle.rename(
+                ikCurve.nodeName() + '_ch_{}'.format(str(i).zfill(digits))
+            )
+
+    def stretch(self):
+
         pass
 
 
