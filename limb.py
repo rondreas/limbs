@@ -198,20 +198,30 @@ class Limb(object):
         for joint in self.joints:
             joint.setAttr("rotateOrder", order)
 
-    def duplicate(self, prefix):
-        """ Duplicate the joints in limb, and return a new limb object for the copy.
-            :var str prefix:
-            :rtype list:"""
+    def duplicate(self, prefix='', suffix='', parent=None):
+        """ Duplicate joints in limb, optionally adding prefix and suffix to name, or replacing a substring.
+        Then parenting the top node to specified parent or world.
+
+        :argument: prefix - a string to add before the name of copied joint,
+        :argument: suffix - a string to add after the name of copied joint,
+        :argument: parent - a string specifying a node, or a pymel node object,
+
+        :returns: list of pymel joints
+
+        """
 
         # Duplicate all joints and ignore children.
         copy = pm.duplicate(self.joints, parentOnly=True)
 
-        # Rename each copied joint to prefix + joint name
-        for i, joint in enumerate(self.joints):
-            copy[i].rename(prefix + joint.nodeName())
+        for old, new in zip(self.joints, copy):
+            name = old.nodeName()
+            new.rename(prefix + name + suffix)
 
-        # Parent new chain to world
-        pm.parent(copy[0], world=True)
+        if parent:
+            pm.parent(copy[0], parent)
+
+        else:
+            pm.parent(copy[0], world=True)
 
         return copy
 
