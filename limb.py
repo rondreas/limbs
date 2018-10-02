@@ -303,7 +303,7 @@ class Limb(object):
 class IKLimb(Limb):
 
     def __init__(self, name, startJoint=None, endJoint=None, parent=None):
-        super(IKLimb, self).__init__(name, startJoint, endJoint, parent)
+        super(IKLimb, self).__init__(name, startJoint, endJoint)
         self.ikHandle = None
 
     def stretch(self, controller):
